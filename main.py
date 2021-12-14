@@ -3,7 +3,7 @@ from functions import extract_text_from_transkribus, load_surnames_db, surnames_
 
 @click.command()
 @click.option("--transkribus-folder", help="Folder containing .XML files exported from Transkribus")
-@click.option("--surnames-db", help=".txt file containing list of surnames")
+@click.option("--surnames-db", default='databases/final_database_estonian_surnames.txt', help=".txt file containing list of surnames")
 @click.option("--min-edit-distance", default=1, help="Minimum edit distance to consider a match")
 @click.option("--min-word-size", default=3, help="Minimum word size to consider a valid word")
 @click.option("--export-file", default='results.json', help=".json file with results")
