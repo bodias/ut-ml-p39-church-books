@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 def extract_text_from_transkribus(folder_name:str) -> list :
     """Given a folder with XML extracted from transkribus, return all detected text"""
     
-    extracted_data = []
+    extracted_data = {}
     xml_files = [file for file in os.listdir(folder_name) if file[-4:]==".xml"]
 
     if not xml_files:
@@ -30,6 +30,11 @@ def extract_text_from_transkribus(folder_name:str) -> list :
         page_search = p.search(xml_filename)
         if page_search:
             page_no = int(page_search.group(1))
+        else:
+            try:
+                page_no = int(xml_filename[:-4])
+            except:
+                logging.error(f"Couldn't retrieve page no from xml_filename {xml_filename}")
 
         with open(os.path.join(folder_name, xml_filename), "r") as xml_file:
             xml_content = xml_file.read()
@@ -43,12 +48,14 @@ def extract_text_from_transkribus(folder_name:str) -> list :
             for xy in coord:
                 point = xy.split(",")
                 polygon.append((int(point[0]), int(point[1])))
-            content = data.find('unicode').get_text()
+            # Get only text from element "TextEquiv". avoid "Word" Tag
+            for ch in data.children:
+                if ch.name == "textequiv":
+                    content = ch.find('unicode').get_text()
             detected_text.append({'polygon': polygon, 'content': content})
-
-        extracted_data.append({"source_file": xml_filename,
-                               "page_no": page_no,
-                               "detected_text": detected_text})
+        extracted_data[page_no] = {"source_file": xml_filename,
+                                   "page_no": page_no,
+                                   "detected_text": detected_text}
     return extracted_data
 
 def load_surnames_db(file: str) -> list:
@@ -59,7 +66,7 @@ def load_surnames_db(file: str) -> list:
     with open(file, 'r') as f:
         surnames_db = f.readlines()
     surnames_db = [surnames.replace("\n", "") for surnames in surnames_db]
-            
+
     return surnames_db
 
 def export_results(results:list, file:str):
@@ -71,10 +78,10 @@ def export_results(results:list, file:str):
         json.dump(results, f)
     print(f"Results exported to {file}")
 
-def surnames_search(extracted_data: list, surnames_db: list, min_edit_distance = 1, min_word_size = 3):
-    similarity_list = []
-    for page in tqdm(extracted_data):
-        all_detected_text = [text['content'] for text in page['detected_text']]
+def surnames_db_search(extracted_data: list, surnames_db: list, min_edit_distance = 1, min_word_size = 3):
+    similarity_list = {}
+    for page_no, page_data in tqdm(extracted_data.items()):
+        all_detected_text = [text['content'] for text in page_data['detected_text']]
         for word in all_detected_text:
             if len(word) >= min_word_size:
                 surname_matches = []
@@ -83,10 +90,55 @@ def surnames_search(extracted_data: list, surnames_db: list, min_edit_distance =
                     if dist <= min_edit_distance:
                         surname_matches.append({"surname": surname, "lev_distance": dist})
                 if surname_matches:
-                    similarity_list.append({'page_no': page['page_no'],
-                                            'detected_surname': word,
-                                            'matches': surname_matches})
-                        
-    logging.info(f"{len(similarity_list)} possible surnames found!")
+                    if page_no not in similarity_list.keys():
+                        similarity_list[page_no] = []
+                    similarity_list[page_no].append({'page_no': page_no,
+                                                     'extracted_surname': word,
+                                                     'matches': surname_matches})
 
     return similarity_list
+
+def surnames_regex_search(extracted_data: list, min_word_size = 3):
+    surname_regex = r'^(?:[A-ZÄÖÕÜ][a-zäöõü.]*(?:\s|\+)){1,}([A-ZÄÖÜ][a-zäöü]{1,})(?:\sll|\slaps|\sL|\sT|\sLesk)?$'
+    p = re.compile(surname_regex)
+    
+    extracted_surnames = {}
+    for page_no, page_data in tqdm(extracted_data.items()):
+        for text in page_data["detected_text"]:
+            content = text["content"]
+            name_match = p.match(content)
+            if name_match:
+                surname = name_match.group(1)            
+                if surname == "Lesk":
+                    surname = content[:content.rfind("Lesk")-1]
+                    surname = surname[surname.rfind(" ")+1:]
+                # print(f"page: {page_no}: {content}->{surname}")                   
+                if page_no not in extracted_surnames.keys():
+                    extracted_surnames[page_no] = []
+                
+                extracted_surnames[page_no].append({'page_no': page_no,
+                                                    'extracted_surname': surname,
+                                                    'matches': [{"surname": content, "lev_distance": 0}]})
+    
+    return extracted_surnames
+
+def get_metrics(predicted_data, gt_data, verbose=False):
+    all_surnames = [word["extracted_surname"] for pages in gt_data.values() for word in pages["detected_text"]]
+    counters = {"combined_matches": 0}
+    count_gt_surnames = len(all_surnames)
+    
+    for method, extracted_data in predicted_data.items():
+        counters[method] = 0
+        for page_no, detected_surnames in extracted_data.items():
+            if verbose:
+                print(f"page no: {page_no}")
+            for detected_surname in detected_surnames:
+                for true_surname in gt_data[page_no]["detected_text"]:
+                    if detected_surname['extracted_surname']==true_surname["extracted_surname"]:
+                        counters["combined_matches"] += 1
+                        counters[method] += 1
+                        if verbose:
+                            print(f"{detected_surname['extracted_surname']}=={true_surname['extracted_surname']}")
+                    
+    accuracy = {k: v/len(all_surnames) for k,v in counters.items()} 
+    return counters, accuracy    
