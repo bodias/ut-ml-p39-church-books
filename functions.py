@@ -113,12 +113,13 @@ def surnames_regex_search(extracted_data: list, min_word_size = 3):
                     surname = content[:content.rfind("Lesk")-1]
                     surname = surname[surname.rfind(" ")+1:]
                 # print(f"page: {page_no}: {content}->{surname}")                   
-                if page_no not in extracted_surnames.keys():
-                    extracted_surnames[page_no] = []
-                
-                extracted_surnames[page_no].append({'page_no': page_no,
-                                                    'extracted_surname': surname,
-                                                    'matches': [{"surname": content, "lev_distance": 0}]})
+                if len(surname) > min_word_size:
+                    if page_no not in extracted_surnames.keys():
+                        extracted_surnames[page_no] = []
+                    
+                    extracted_surnames[page_no].append({'page_no': page_no,
+                                                        'extracted_surname': surname,
+                                                        'matches': [{"surname": content, "lev_distance": 0}]})
     
     return extracted_surnames
 
